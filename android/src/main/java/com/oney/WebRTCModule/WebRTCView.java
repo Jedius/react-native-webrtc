@@ -4,9 +4,14 @@ import android.annotation.SuppressLint;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.Point;
+import android.graphics.SurfaceTexture;
 import android.util.Log;
 import android.view.View;
 import android.view.ViewGroup;
+import android.graphics.Outline;
+import android.view.ViewOutlineProvider;
+import android.widget.FrameLayout;
+import android.view.ViewTreeObserver;
 
 import androidx.core.view.ViewCompat;
 
@@ -142,7 +147,12 @@ public class WebRTCView extends ViewGroup {
      * The {@link View} and {@link VideoSink} implementation which
      * actually renders {@link #videoTrack} on behalf of this instance.
      */
-    private final SurfaceViewRenderer surfaceViewRenderer;
+//     private final SurfaceViewRenderer surfaceViewRenderer;
+
+    private SurfaceViewRenderer surfaceViewRenderer;
+    private TextureViewRenderer textureViewRenderer;
+    private boolean useSurfaceView = true;
+    private int zOrder = 0;
 
     /**
      * The {@code VideoTrack}, if any, rendered by this {@code WebRTCView}.
@@ -157,11 +167,22 @@ public class WebRTCView extends ViewGroup {
     public WebRTCView(Context context) {
         super(context);
 
+        // Initially use SurfaceView
         surfaceViewRenderer = new SurfaceViewRenderer(context);
-        addView(surfaceViewRenderer);
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        );
+        addView(surfaceViewRenderer, params);
 
-        setMirror(false);
-        setScalingType(DEFAULT_SCALING_TYPE);
+        // Don't call setMirror/setScalingType yet - they will be called when renderer is ready
+        // Just store the initial values
+        this.mirror = false;
+        this.scalingType = DEFAULT_SCALING_TYPE;
+
+        // Now apply to the already-added SurfaceView
+        surfaceViewRenderer.setMirror(this.mirror);
+        surfaceViewRenderer.setScalingType(this.scalingType);
     }
 
     /**
@@ -169,8 +190,13 @@ public class WebRTCView extends ViewGroup {
      * opaque black and the surface part to transparent.
      */
     private void cleanSurfaceViewRenderer() {
-        surfaceViewRenderer.setBackgroundColor(Color.BLACK);
-        surfaceViewRenderer.clearImage();
+        // Only set background color for SurfaceView
+        if (useSurfaceView && surfaceViewRenderer != null) {
+            surfaceViewRenderer.setBackgroundColor(Color.BLACK);
+            surfaceViewRenderer.clearImage();
+        } else if (!useSurfaceView && textureViewRenderer != null) {
+            textureViewRenderer.clearImage();
+        }
     }
 
     /**
@@ -259,7 +285,10 @@ public class WebRTCView extends ViewGroup {
     private void onFirstFrameRendered() {
         post(() -> {
             Log.d(TAG, "First frame rendered.");
-            surfaceViewRenderer.setBackgroundColor(Color.TRANSPARENT);
+            // Only set background color for SurfaceView
+            if (useSurfaceView && surfaceViewRenderer != null) {
+                surfaceViewRenderer.setBackgroundColor(Color.TRANSPARENT);
+            }// TextureView doesn't need background color changes
         });
     }
 
@@ -315,6 +344,12 @@ public class WebRTCView extends ViewGroup {
 
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
+        View renderer = useSurfaceView ? surfaceViewRenderer : textureViewRenderer;
+        if (renderer == null) {
+            return;
+        }
+
+
         int height = b - t;
         int width = r - l;
 
@@ -351,7 +386,12 @@ public class WebRTCView extends ViewGroup {
                     // to the cover or contain value of the CSS property object-fit
                     // (which will not matter, eventually).
                     if (frameHeight == 0 || frameWidth == 0) {
-                        l = t = r = b = 0;
+                        // FIX: Default to filling the view so the renderer (specifically TextureView)
+                        // has dimensions to initialize its surface.
+                        l = 0;
+                        t = 0;
+                        r = width;
+                        b = height;
                     } else {
                         float frameAspectRatio = (frameRotation % 180 == 0) ? frameWidth / (float) frameHeight
                                                                             : frameHeight / (float) frameWidth;
@@ -366,7 +406,8 @@ public class WebRTCView extends ViewGroup {
                     break;
             }
         }
-        surfaceViewRenderer.layout(l, t, r, b);
+        // layout takes coordinates relative to the parent (this ViewGroup)
+        renderer.layout(l, t, r, b);
     }
 
     /**
@@ -378,21 +419,26 @@ public class WebRTCView extends ViewGroup {
             if (videoTrack != null) {
                 ThreadUtils.runOnExecutor(() -> {
                     try {
-                        videoTrack.removeSink(surfaceViewRenderer);
+                        if (useSurfaceView && surfaceViewRenderer != null) {
+                            videoTrack.removeSink(surfaceViewRenderer);
+                        } else if (!useSurfaceView && textureViewRenderer != null) {
+                            videoTrack.removeSink(textureViewRenderer);
+                        }
                     } catch (Throwable tr) {
-                        // XXX If WebRTCModule#mediaStreamTrackRelease has already been
-                        // invoked on videoTrack, then it is no longer safe to call removeSink
-                        // on the instance, it will throw IllegalStateException.
+                        // Handle exception
                     }
                 });
             }
 
-            surfaceViewRenderer.release();
+            if (useSurfaceView && surfaceViewRenderer != null) {
+                surfaceViewRenderer.release();
+            } else if (!useSurfaceView && textureViewRenderer != null) {
+                textureViewRenderer.release();
+            }
+
             surfaceViewRendererInstances--;
             rendererAttached = false;
 
-            // Since this WebRTCView is no longer rendering anything, make sure
-            // surfaceViewRenderer displays nothing as well.
             synchronized (layoutSyncRoot) {
                 frameHeight = 0;
                 frameRotation = 0;
@@ -409,14 +455,14 @@ public class WebRTCView extends ViewGroup {
      */
     @SuppressLint("WrongCall")
     private void requestSurfaceViewRendererLayout() {
-        // Google/WebRTC just call requestLayout() on surfaceViewRenderer when
-        // they change the value of its mirror or surfaceType property.
-        surfaceViewRenderer.requestLayout();
-        // The above is not enough though when the video frame's dimensions or
-        // rotation change. The following will suffice.
+        if (useSurfaceView && surfaceViewRenderer != null) {
+            surfaceViewRenderer.requestLayout();
+        } else if (!useSurfaceView && textureViewRenderer != null) {
+            textureViewRenderer.requestLayout();
+        }
+
         if (!ViewCompat.isInLayout(this)) {
-            onLayout(
-                    /* changed */ false, getLeft(), getTop(), getRight(), getBottom());
+            onLayout(false, getLeft(), getTop(), getRight(), getBottom());
         }
     }
 
@@ -428,13 +474,28 @@ public class WebRTCView extends ViewGroup {
      * represented by {@code videoTrack} during its rendering, {@code true};
      * otherwise, {@code false}.
      */
+    private boolean pendingMirror = false;
+    private boolean hasPendingMirror = false;
+
     public void setMirror(boolean mirror) {
         if (this.mirror != mirror) {
             this.mirror = mirror;
-            surfaceViewRenderer.setMirror(mirror);
-            // SurfaceViewRenderer takes the value of its mirror property into
-            // account upon its layout.
-            requestSurfaceViewRendererLayout();
+
+            // If we're using TextureView and it's not ready yet, store for later
+            if (!useSurfaceView && textureViewRenderer != null && textureViewRenderer.getWidth() == 0) {
+                Log.d(TAG, "Deferring setMirror until TextureView is ready");
+                pendingMirror = mirror;
+                hasPendingMirror = true;
+                return;
+            }
+
+            if (useSurfaceView && surfaceViewRenderer != null) {
+                surfaceViewRenderer.setMirror(mirror);
+                requestSurfaceViewRendererLayout();
+            } else if (!useSurfaceView && textureViewRenderer != null) {
+                textureViewRenderer.setMirror(mirror);
+                requestSurfaceViewRendererLayout();
+            }
         }
     }
 
@@ -461,10 +522,12 @@ public class WebRTCView extends ViewGroup {
                 return;
             }
             this.scalingType = scalingType;
-            surfaceViewRenderer.setScalingType(scalingType);
+            if (useSurfaceView && surfaceViewRenderer != null) {
+                surfaceViewRenderer.setScalingType(scalingType);
+            } else if (!useSurfaceView && textureViewRenderer != null) {
+                textureViewRenderer.setScalingType(scalingType);
+            }
         }
-        // Both this instance ant its SurfaceViewRenderer take the value of
-        // their scalingType properties into account upon their layouts.
         requestSurfaceViewRendererLayout();
     }
 
@@ -547,16 +610,9 @@ public class WebRTCView extends ViewGroup {
      * @param zOrder The z-order to set on this {@code WebRTCView}.
      */
     public void setZOrder(int zOrder) {
-        switch (zOrder) {
-            case 0:
-                surfaceViewRenderer.setZOrderMediaOverlay(false);
-                break;
-            case 1:
-                surfaceViewRenderer.setZOrderMediaOverlay(true);
-                break;
-            case 2:
-                surfaceViewRenderer.setZOrderOnTop(true);
-                break;
+        if (this.zOrder != zOrder) {
+            this.zOrder = zOrder;
+            applyZOrderAndCornerRadius();
         }
     }
 
@@ -566,33 +622,38 @@ public class WebRTCView extends ViewGroup {
      */
     private void tryAddRendererToVideoTrack() {
         if (!rendererAttached && videoTrack != null && ViewCompat.isAttachedToWindow(this)) {
+            // For TextureView, wait until it has dimensions
+            if (!useSurfaceView && textureViewRenderer != null && textureViewRenderer.getWidth() == 0) {
+                Log.d(TAG, "TextureView not ready yet, deferring initialization");
+                return;
+            }
+
             EglBase.Context sharedContext = EglUtils.getRootEglBaseContext();
 
             if (sharedContext == null) {
-                // If SurfaceViewRenderer#init() is invoked, it will throw a
-                // RuntimeException which will very likely kill the application.
-                Log.e(TAG, "Failed to render a VideoTrack!");
                 return;
             }
 
             try {
-                surfaceViewRenderer.init(sharedContext, rendererEvents);
+                if (useSurfaceView && surfaceViewRenderer != null) {
+                    surfaceViewRenderer.init(sharedContext, rendererEvents);
+                } else if (!useSurfaceView && textureViewRenderer != null) {
+                    textureViewRenderer.init(sharedContext, rendererEvents);
+                }
                 surfaceViewRendererInstances++;
             } catch (Exception e) {
-                Logging.e(
-                        TAG, "Failed to initialize surfaceViewRenderer on instance " + surfaceViewRendererInstances, e);
                 return;
             }
 
             ThreadUtils.runOnExecutor(() -> {
                 try {
-                    videoTrack.addSink(surfaceViewRenderer);
+                    if (useSurfaceView && surfaceViewRenderer != null) {
+                        videoTrack.addSink(surfaceViewRenderer);
+                    } else if (!useSurfaceView && textureViewRenderer != null) {
+                        videoTrack.addSink(textureViewRenderer);
+                    }
                 } catch (Throwable tr) {
-                    // XXX If WebRTCModule#mediaStreamTrackRelease has already been
-                    // invoked on videoTrack, then it is no longer safe to call addSink
-                    // on the instance, it will throw IllegalStateException.
-
-                    Log.e(TAG, "Failed to add renderer", tr);
+                    // Handle exception
                 }
             });
 
@@ -608,4 +669,137 @@ public class WebRTCView extends ViewGroup {
     public void setOnDimensionsChange(boolean enabled) {
         this.onDimensionsChangeEnabled = enabled;
     }
+
+    /**
+     * The corner radius for the view in pixels.
+     */
+    private float cornerRadius = 0f;
+
+    /**
+     * Sets the corner radius for rounded corners.
+     *
+     * @param radius The corner radius in pixels.
+     */
+    public void setCornerRadius(float radius) {
+        if (this.cornerRadius != radius) {
+            this.cornerRadius = radius;
+            applyZOrderAndCornerRadius();
+        }
+    }
+
+    private void switchRenderer(boolean useSurface) {
+        if (this.useSurfaceView == useSurface) {
+            return;
+        }
+
+        Log.d(TAG, "Switching renderer to " + (useSurface ? "SurfaceView" : "TextureView"));
+
+        // Remove old renderer
+        removeRendererFromVideoTrack();
+
+        if (useSurface) {
+            // Switch to SurfaceView
+            if (textureViewRenderer != null) {
+                removeView(textureViewRenderer);
+                textureViewRenderer = null;
+            }
+            if (surfaceViewRenderer == null) {
+                surfaceViewRenderer = new SurfaceViewRenderer(getContext());
+                FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                );
+                addView(surfaceViewRenderer, 0, params);
+            }
+
+            this.useSurfaceView = true;
+            setMirror(mirror);
+            setScalingType(scalingType);
+
+            postDelayed(() -> {
+                tryAddRendererToVideoTrack();
+            }, 500);
+} else {
+    // Switch to TextureView
+    if (surfaceViewRenderer != null) {
+        removeView(surfaceViewRenderer);
+        surfaceViewRenderer = null;
+    }
+    if (textureViewRenderer == null) {
+        final TextureViewRenderer renderer = new TextureViewRenderer(getContext());
+        renderer.setOpaque(false);
+
+        this.useSurfaceView = false;
+        this.textureViewRenderer = renderer;
+
+        // Set the listener IMMEDIATELY after storing the reference
+        renderer.setOnSurfaceReadyListener((width, height) -> {
+            Log.d(TAG, "TextureView surface ready callback: " + width + "x" + height);
+
+            if (hasPendingMirror) {
+                textureViewRenderer.setMirror(pendingMirror);
+                hasPendingMirror = false;
+            }
+
+            setScalingType(scalingType);
+
+            postDelayed(() -> {
+                tryAddRendererToVideoTrack();
+            }, 100);
+        });
+
+        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        );
+
+        // Now add the view
+        addView(renderer, 0, params);
+    }
+}
+
+    }
+
+
+
+    private void applyZOrderAndCornerRadius() {
+        boolean shouldUseSurface = !(zOrder > 0 && cornerRadius > 0);
+
+        switchRenderer(shouldUseSurface);
+
+        // Only apply z-order for SurfaceView (setMirror is called inside switchRenderer)
+        if (useSurfaceView && surfaceViewRenderer != null) {
+            switch (zOrder) {
+                case 0:
+                    surfaceViewRenderer.setZOrderMediaOverlay(false);
+                    surfaceViewRenderer.setZOrderOnTop(false);
+                    break;
+                case 1:
+                    surfaceViewRenderer.setZOrderMediaOverlay(true);
+                    break;
+                case 2:
+                    surfaceViewRenderer.setZOrderOnTop(true);
+                    break;
+            }
+        }
+
+        // Apply corner radius clipping
+        if (cornerRadius > 0) {
+            setClipToOutline(true);
+            setOutlineProvider(new ViewOutlineProvider() {
+                @Override
+                public void getOutline(View view, Outline outline) {
+                    outline.setRoundRect(0, 0, view.getWidth(), view.getHeight(), cornerRadius);
+                }
+            });
+        } else {
+            setClipToOutline(false);
+            setOutlineProvider(null);
+        }
+
+        requestLayout();
+        invalidateOutline();
+    }
+
+
 }

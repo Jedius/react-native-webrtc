@@ -87,6 +87,17 @@ public class RTCVideoViewManager extends SimpleViewManager<WebRTCView> {
         view.setOnDimensionsChange(onDimensionsChange);
     }
 
+    /**
+     * Sets the corner radius for rounded corners on the video view.
+     *
+     * @param view The {@code WebRTCView} on which the corner radius is to be set.
+     * @param cornerRadius The corner radius in pixels.
+     */
+    @ReactProp(name = "cornerRadius")
+    public void setCornerRadius(WebRTCView view, float cornerRadius) {
+        view.setCornerRadius(cornerRadius);
+    }
+
     @Override
     public Map<String, Object> getExportedCustomDirectEventTypeConstants() {
         Map<String, Object> eventTypeConstants = new HashMap<>();
