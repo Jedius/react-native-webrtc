@@ -88,14 +88,14 @@ public class RTCVideoViewManager extends SimpleViewManager<WebRTCView> {
     }
 
     /**
-     * Sets the corner radius for rounded corners on the video view.
+     * Sets whether to use TextureViewRenderer instead of SurfaceViewRenderer.
      *
-     * @param view The {@code WebRTCView} on which the corner radius is to be set.
-     * @param cornerRadius The corner radius in pixels.
+     * @param view The {@code WebRTCView} on which the renderer type is to be set.
+     * @param textureRenderer true to use TextureViewRenderer, false for SurfaceViewRenderer.
      */
-    @ReactProp(name = "cornerRadius")
-    public void setCornerRadius(WebRTCView view, float cornerRadius) {
-        view.setCornerRadius(cornerRadius);
+    @ReactProp(name = "textureRenderer")
+    public void setTextureRenderer(WebRTCView view, boolean textureRenderer) {
+        view.setTextureRenderer(textureRenderer);
     }
 
     @Override
