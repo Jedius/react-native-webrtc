@@ -321,16 +321,20 @@ try {
 
 ## Rendering the Media Stream
 
-Once you've gained a local and/or remote stream then rendering it is as follows.  
-Don't forget, the user facing camera is usually mirrored.  
+Once you've gained a local and/or remote stream then rendering it is as follows.
+Don't forget, the user facing camera is usually mirrored.
+You can also use `textureRenderer={true}` on Android if you experience styling issues with the default SurfaceView.
 
 ```javascript
-<RTCView
-	mirror={true}
-	objectFit={'cover'}
-	streamURL={localMediaStream.toURL()}
-	zOrder={0}
-/>
+return (
+ <RTCView
+  mirror={true}
+  objectFit={'cover'}
+  streamURL={localMediaStream.toURL()}
+  zOrder={0}
+  textureRenderer={false} // Android only
+ />
+);
 ```
 
 | Param | Type | Default | Description |

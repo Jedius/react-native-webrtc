@@ -61,6 +61,12 @@ export interface RTCVideoViewProps extends ViewProps {
    */
   zOrder?: number;
 
+  /**
+   * Android only.
+   * Use TextureView instead of SurfaceView for rendering.
+   * Only enable this if you experience styling issues with SurfaceView.
+   */
+  textureRenderer?: boolean;
 
   /**
    * Picture in picture options for this view. Disabled if not supplied.
@@ -80,11 +86,10 @@ export interface RTCVideoViewProps extends ViewProps {
    * @param {number} event.nativeEvent.width - The width of the video.
    * @param {number} event.nativeEvent.height - The height of the video.
    */
-  onDimensionsChange?: (event: { nativeEvent: { width: number; height: number } }) => void;
+  onDimensionsChange?: (event: { nativeEvent: { width: number, height: number } }) => void;
 }
 
 export interface RTCIOSPIPOptions {
-
   /**
    * Whether PIP can be launched from this view.
    *
@@ -96,9 +101,9 @@ export interface RTCIOSPIPOptions {
    * The preferred size of the PIP window.
    */
   preferredSize?: {
-    width: number;
-    height: number;
-  },
+    width: number,
+    height: number,
+  };
 
   /**
    * Indicates whether Picture in Picture starts automatically
@@ -119,4 +124,4 @@ export interface RTCIOSPIPOptions {
    */
   stopAutomatically?: boolean;
 }
-export default requireNativeComponent<RTCVideoViewProps>('RTCVideoView');
+export default requireNativeComponent < RTCVideoViewProps > 'RTCVideoView';
