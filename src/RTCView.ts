@@ -124,4 +124,6 @@ export interface RTCIOSPIPOptions {
    */
   stopAutomatically?: boolean;
 }
-export default requireNativeComponent < RTCVideoViewProps > 'RTCVideoView';
+
+// prettier-ignore
+export default requireNativeComponent<RTCVideoViewProps>('RTCVideoView');
